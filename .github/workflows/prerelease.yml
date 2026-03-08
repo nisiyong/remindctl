@@ -1,0 +1,75 @@
+name: prerelease
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prerelease:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare prerelease metadata
+        id: meta
+        shell: bash
+        run: |
+          source version.env
+          short_sha="${GITHUB_SHA::7}"
+          ref_slug="$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9._-]+#-#g; s#^-+##; s#-+$##')"
+          tag="beta-v${MARKETING_VERSION}-${ref_slug}-${short_sha}"
+          name="Beta v${MARKETING_VERSION} (${ref_slug}@${short_sha})"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$MARKETING_VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<EOF"
+            echo "Automated pre-release build from branch."
+            echo ""
+            echo "- Version: ${MARKETING_VERSION}"
+            echo "- Branch: ${GITHUB_REF_NAME}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Trigger: ${GITHUB_EVENT_NAME}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve packages
+        run: swift package resolve
+
+      - name: Sync version
+        run: scripts/generate-version.sh
+
+      - name: Build
+        run: swift build -c release --product remindctl
+
+      - name: Codesign
+        run: codesign --force --sign - --identifier com.steipete.remindctl .build/release/remindctl
+
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          cp .build/release/remindctl dist/remindctl
+          (
+            cd dist
+            zip -r remindctl-macos.zip remindctl
+          )
+
+      - name: Publish pre-release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: dist/remindctl-macos.zip
+          body: ${{ steps.meta.outputs.notes }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
