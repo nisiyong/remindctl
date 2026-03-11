@@ -49,7 +49,11 @@ remindctl list Projects --create
 
 remindctl add "Buy milk"
 remindctl add --title "Call mom" --list Personal --due tomorrow
+remindctl add "Finish report" --tag Work --tag Q1
 remindctl edit 1 --title "New title" --due 2026-01-04
+remindctl edit 12 --tag Urgent --tag Work
+remindctl edit 12 --remove-tag Urgent
+remindctl tags                  # list tags
 remindctl complete 1 2 3
 remindctl delete 4A83 --force
 remindctl status                # permission status

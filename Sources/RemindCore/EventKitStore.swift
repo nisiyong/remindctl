@@ -65,6 +65,18 @@ public actor RemindersStore {
     return await fetchReminders(in: calendars)
   }
 
+  public func tags() async throws -> [ReminderTagSummary] {
+    try ensureTagSupport()
+    let reminders = try await reminders(in: nil)
+    var counts: [String: Int] = [:]
+    for reminder in reminders {
+      for tag in Set(reminder.tags) {
+        counts[tag, default: 0] += 1
+      }
+    }
+    return counts.keys.sorted().map { ReminderTagSummary(name: $0, reminderCount: counts[$0] ?? 0) }
+  }
+
   public func createList(name: String) async throws -> ReminderList {
     let list = EKCalendar(for: .reminder, eventStore: eventStore)
     list.title = name
@@ -103,18 +115,12 @@ public actor RemindersStore {
     if let dueDate = draft.dueDate {
       reminder.dueDateComponents = calendarComponents(from: dueDate)
     }
+    if !draft.tags.isEmpty {
+      try ensureTagSupport()
+      applyTagNames(draft.tags, to: reminder)
+    }
     try eventStore.save(reminder, commit: true)
-    return ReminderItem(
-      id: reminder.calendarItemIdentifier,
-      title: reminder.title ?? "",
-      notes: reminder.notes,
-      isCompleted: reminder.isCompleted,
-      completionDate: reminder.completionDate,
-      priority: ReminderPriority(eventKitValue: Int(reminder.priority)),
-      dueDate: date(from: reminder.dueDateComponents),
-      listID: reminder.calendar.calendarIdentifier,
-      listName: reminder.calendar.title
-    )
+    return item(from: reminder)
   }
 
   public func updateReminder(id: String, update: ReminderUpdate) async throws -> ReminderItem {
@@ -125,6 +131,15 @@ public actor RemindersStore {
     }
     if let notes = update.notes {
       reminder.notes = notes
+    }
+    if let addTags = update.addTags {
+      try ensureTagSupport()
+      applyTagNames(normalizeTagNames(readTagNames(from: reminder) + addTags), to: reminder)
+    }
+    if let removeTags = update.removeTags {
+      try ensureTagSupport()
+      let updatedTags = readTagNames(from: reminder).filter { !Set(removeTags).contains($0) }
+      applyTagNames(updatedTags, to: reminder)
     }
     if let dueDateUpdate = update.dueDate {
       if let dueDate = dueDateUpdate {
@@ -145,17 +160,7 @@ public actor RemindersStore {
 
     try eventStore.save(reminder, commit: true)
 
-    return ReminderItem(
-      id: reminder.calendarItemIdentifier,
-      title: reminder.title ?? "",
-      notes: reminder.notes,
-      isCompleted: reminder.isCompleted,
-      completionDate: reminder.completionDate,
-      priority: ReminderPriority(eventKitValue: Int(reminder.priority)),
-      dueDate: date(from: reminder.dueDateComponents),
-      listID: reminder.calendar.calendarIdentifier,
-      listName: reminder.calendar.title
-    )
+    return item(from: reminder)
   }
 
   public func completeReminders(ids: [String]) async throws -> [ReminderItem] {
@@ -164,19 +169,7 @@ public actor RemindersStore {
       let reminder = try reminder(withID: id)
       reminder.isCompleted = true
       try eventStore.save(reminder, commit: true)
-      updated.append(
-        ReminderItem(
-          id: reminder.calendarItemIdentifier,
-          title: reminder.title ?? "",
-          notes: reminder.notes,
-          isCompleted: reminder.isCompleted,
-          completionDate: reminder.completionDate,
-          priority: ReminderPriority(eventKitValue: Int(reminder.priority)),
-          dueDate: date(from: reminder.dueDateComponents),
-          listID: reminder.calendar.calendarIdentifier,
-          listName: reminder.calendar.title
-        )
-      )
+      updated.append(item(from: reminder))
     }
     return updated
   }
@@ -208,6 +201,7 @@ public actor RemindersStore {
       let id: String
       let title: String
       let notes: String?
+      let tags: [String]
       let isCompleted: Bool
       let completionDate: Date?
       let priority: Int
@@ -224,6 +218,7 @@ public actor RemindersStore {
             id: reminder.calendarItemIdentifier,
             title: reminder.title ?? "",
             notes: reminder.notes,
+            tags: self.readTagNames(from: reminder),
             isCompleted: reminder.isCompleted,
             completionDate: reminder.completionDate,
             priority: Int(reminder.priority),
@@ -241,6 +236,7 @@ public actor RemindersStore {
         id: data.id,
         title: data.title,
         notes: data.notes,
+        tags: data.tags,
         isCompleted: data.isCompleted,
         completionDate: data.completionDate,
         priority: ReminderPriority(eventKitValue: data.priority),
@@ -280,6 +276,7 @@ public actor RemindersStore {
       id: reminder.calendarItemIdentifier,
       title: reminder.title ?? "",
       notes: reminder.notes,
+      tags: readTagNames(from: reminder),
       isCompleted: reminder.isCompleted,
       completionDate: reminder.completionDate,
       priority: ReminderPriority(eventKitValue: Int(reminder.priority)),
@@ -287,5 +284,52 @@ public actor RemindersStore {
       listID: reminder.calendar.calendarIdentifier,
       listName: reminder.calendar.title
     )
+  }
+
+  private func ensureTagSupport() throws {
+    let reminder = EKReminder(eventStore: eventStore)
+    guard reminder.responds(to: NSSelectorFromString("tags")),
+      reminder.responds(to: NSSelectorFromString("setTags:"))
+    else {
+      throw RemindCoreError.unsupported("Reminder tags are not supported on this macOS/EventKit runtime.")
+    }
+  }
+
+  private func readTagNames(from reminder: EKReminder) -> [String] {
+    guard reminder.responds(to: NSSelectorFromString("tags")) else {
+      return []
+    }
+    return decodeTagNames(from: reminder.value(forKey: "tags"))
+  }
+
+  private func applyTagNames(_ tags: [String], to reminder: EKReminder) {
+    reminder.setValue(normalizeTagNames(tags), forKey: "tags")
+  }
+
+  private func decodeTagNames(from value: Any?) -> [String] {
+    guard let value else { return [] }
+    if let names = value as? [String] {
+      return normalizeTagNames(names)
+    }
+    if let array = value as? NSArray {
+      return normalizeTagNames(array.compactMap(decodeTagName(from:)))
+    }
+    return []
+  }
+
+  private func decodeTagName(from value: Any) -> String? {
+    if let name = value as? String {
+      return name
+    }
+    guard let object = value as? NSObject else {
+      return nil
+    }
+    if object.responds(to: NSSelectorFromString("name")) {
+      return object.value(forKey: "name") as? String
+    }
+    if object.responds(to: NSSelectorFromString("title")) {
+      return object.value(forKey: "title") as? String
+    }
+    return nil
   }
 }

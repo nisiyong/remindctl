@@ -10,6 +10,7 @@ struct HelpPrinterTests {
       ShowCommand.spec,
       ListCommand.spec,
       AddCommand.spec,
+      TagsCommand.spec,
       StatusCommand.spec,
       AuthorizeCommand.spec,
     ]
@@ -18,6 +19,7 @@ struct HelpPrinterTests {
     #expect(joined.contains("show"))
     #expect(joined.contains("list"))
     #expect(joined.contains("add"))
+    #expect(joined.contains("tags"))
     #expect(joined.contains("status"))
     #expect(joined.contains("authorize"))
   }
