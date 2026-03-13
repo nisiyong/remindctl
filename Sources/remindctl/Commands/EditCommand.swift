@@ -18,6 +18,13 @@ enum EditCommand {
             .make(label: "list", names: [.short("l"), .long("list")], help: "Move to list", parsing: .singleValue),
             .make(label: "due", names: [.short("d"), .long("due")], help: "Set due date", parsing: .singleValue),
             .make(label: "notes", names: [.short("n"), .long("notes")], help: "Set notes", parsing: .singleValue),
+            .make(label: "tag", names: [.long("tag")], help: "Tag to add (repeatable)", parsing: .singleValue),
+            .make(
+              label: "removeTag",
+              names: [.long("remove-tag")],
+              help: "Tag to remove (repeatable)",
+              parsing: .singleValue
+            ),
             .make(
               label: "priority",
               names: [.short("p"), .long("priority")],
@@ -37,6 +44,8 @@ enum EditCommand {
         "remindctl edit 4A83 --due tomorrow",
         "remindctl edit 2 --priority high --notes \"Call before noon\"",
         "remindctl edit 3 --clear-due",
+        "remindctl edit 12 --tag Urgent --tag Work",
+        "remindctl edit 12 --remove-tag Urgent",
       ]
     ) { values, runtime in
       guard let input = values.argument(0) else {
@@ -54,6 +63,12 @@ enum EditCommand {
       let title = values.option("title")
       let listName = values.option("list")
       let notes = values.option("notes")
+      let addTags = try CommandHelpers.parseTags(values.optionValues("tag"))
+      let removeTags = try CommandHelpers.parseTags(values.optionValues("removeTag"))
+
+      if !addTags.isEmpty && !removeTags.isEmpty {
+        throw RemindCoreError.operationFailed("Use either --tag or --remove-tag, not both")
+      }
 
       var dueUpdate: Date??
       if let dueValue = values.option("due") {
@@ -78,13 +93,17 @@ enum EditCommand {
       }
       let isCompleted: Bool? = completeFlag ? true : (incompleteFlag ? false : nil)
 
-      if title == nil && listName == nil && notes == nil && dueUpdate == nil && priority == nil && isCompleted == nil {
+      if title == nil && listName == nil && notes == nil && dueUpdate == nil && priority == nil && isCompleted == nil
+        && addTags.isEmpty && removeTags.isEmpty
+      {
         throw RemindCoreError.operationFailed("No changes specified")
       }
 
       let update = ReminderUpdate(
         title: title,
         notes: notes,
+        addTags: addTags.isEmpty ? nil : addTags,
+        removeTags: removeTags.isEmpty ? nil : removeTags,
         dueDate: dueUpdate,
         priority: priority,
         listName: listName,

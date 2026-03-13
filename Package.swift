@@ -1,6 +1,8 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+let commandLineToolsFrameworks = "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
+
 let package = Package(
   name: "remindctl",
   platforms: [.macOS(.v14)],
@@ -41,6 +43,19 @@ let package = Package(
       name: "RemindCoreTests",
       dependencies: [
         "RemindCore",
+      ],
+      swiftSettings: [
+        .unsafeFlags([
+          "-F", commandLineToolsFrameworks,
+          "-Xfrontend", "-disable-cross-import-overlay-search",
+        ]),
+      ],
+      linkerSettings: [
+        .unsafeFlags([
+          "-F", commandLineToolsFrameworks,
+          "-Xlinker", "-rpath",
+          "-Xlinker", commandLineToolsFrameworks,
+        ]),
       ]
     ),
     .testTarget(
@@ -48,6 +63,19 @@ let package = Package(
       dependencies: [
         "remindctl",
         "RemindCore",
+      ],
+      swiftSettings: [
+        .unsafeFlags([
+          "-F", commandLineToolsFrameworks,
+          "-Xfrontend", "-disable-cross-import-overlay-search",
+        ]),
+      ],
+      linkerSettings: [
+        .unsafeFlags([
+          "-F", commandLineToolsFrameworks,
+          "-Xlinker", "-rpath",
+          "-Xlinker", commandLineToolsFrameworks,
+        ]),
       ]
     ),
   ],
