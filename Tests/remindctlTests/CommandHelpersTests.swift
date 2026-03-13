@@ -1,5 +1,6 @@
 import Testing
 
+@testable import RemindCore
 @testable import remindctl
 
 @MainActor
@@ -12,7 +13,7 @@ struct CommandHelpersTests {
 
   @Test("parseTags rejects empty values")
   func parseTagsRejectsEmpty() {
-    #expect(throws: Error.self) {
+    #expect(throws: RemindCoreError.operationFailed("Tag values must not be empty")) {
       try CommandHelpers.parseTags(["   "])
     }
   }
